@@ -2,9 +2,10 @@ import type { GameConfig } from '@/domain/config/GameConfig';
 import type { Ghost } from '@/domain/ghost/Ghost';
 import { isAlive } from '@/domain/ghost/Ghost';
 import type { DomainEvent } from '@/domain/ghost/GhostEvents';
+import { spawnOne } from '@/domain/ghost/GhostSpawner';
 import type { LightState } from '@/domain/light/LightState';
 import { millis } from '@/shared/types';
-import type { Millis } from '@/shared/types';
+import type { Millis, Radians } from '@/shared/types';
 import type { Outcome, SessionResult } from './SessionResult';
 
 export type GamePhase =
@@ -22,9 +23,16 @@ export type GamePhase =
 
 export interface SessionState {
   readonly phase: GamePhase;
+  /** 同時に存在するのは常に 1 体。浄化されると次が現れる（設計書 04.1） */
   readonly ghosts: readonly Ghost[];
   readonly light: LightState;
   readonly elapsedMs: Millis;
+  /** これまでに出現させた総数。0 起点のウェーブ番号は spawnedCount - 1 */
+  readonly spawnedCount: number;
+  /** これまでに浄化した総数 */
+  readonly purifiedCount: number;
+  /** この時刻を過ぎたら次の個体を出現させる。待機中でなければ null */
+  readonly nextSpawnAt: Millis | null;
   /** 勝敗が確定した結果。演出中は phase がまだ PLAYING のまま保持される */
   readonly pendingOutcome: Outcome | null;
   /** この時刻を過ぎたら RESULT へ遷移する */
@@ -57,6 +65,9 @@ export function initialState(): SessionState {
     ghosts: [],
     light: 'OFF',
     elapsedMs: millis(0),
+    spawnedCount: 0,
+    purifiedCount: 0,
+    nextSpawnAt: null,
     pendingOutcome: null,
     resultAt: null,
     result: null,
@@ -70,17 +81,20 @@ export function transition(state: SessionState, to: GamePhase): SessionState {
   return { ...state, phase: to };
 }
 
-/** 新しいセッションを開始する。世界のみを作り直す（設計書 04.3） */
-export function startSession(
-  state: SessionState,
-  ghosts: readonly Ghost[],
-): SessionState {
+/**
+ * 新しいセッションを開始する。世界のみを作り直す（設計書 04.3）。
+ * 1 体目だけをここで出現させ、以降は浄化のたびに reduce が補充する。
+ */
+export function startSession(state: SessionState, first: Ghost): SessionState {
   return {
     ...state,
     phase: 'PLAYING',
-    ghosts,
+    ghosts: [first],
     light: 'ON',
     elapsedMs: millis(0),
+    spawnedCount: 1,
+    purifiedCount: 0,
+    nextSpawnAt: null,
     pendingOutcome: null,
     resultAt: null,
     result: null,
@@ -92,6 +106,10 @@ export interface ReduceInput {
   readonly ghosts: readonly Ghost[];
   readonly events: readonly DomainEvent[];
   readonly elapsedMs: Millis;
+  /** 出現位置を現在の視線から離すために使う（設計書 04.7） */
+  readonly viewYaw: Radians;
+  /** 乱数は引数で受け取る。reduce も純粋関数である */
+  readonly random: () => number;
   readonly config: GameConfig;
 }
 
@@ -107,28 +125,59 @@ export interface ReduceOutput {
  * resultDelayMs の間は演出が表示され、ドメインは演出の存在を知らずに済む。
  */
 export function reduce(input: ReduceInput): ReduceOutput {
-  const { state, ghosts, elapsedMs, config } = input;
+  const { state, elapsedMs, config } = input;
   const emitted: DomainEvent[] = [];
 
+  let ghosts = input.ghosts;
+  let spawnedCount = state.spawnedCount;
+  let nextSpawnAt = state.nextSpawnAt;
   let pendingOutcome = state.pendingOutcome;
   let resultAt = state.resultAt;
 
+  const purifiedThisFrame = input.events.filter(
+    (e) => e.type === 'GHOST_PURIFIED',
+  ).length;
+  const purifiedCount = state.purifiedCount + purifiedThisFrame;
+
+  const caught = input.events.some((e) => e.type === 'PLAYER_CAUGHT');
+
+  // ── 次の個体の予約 ──────────────────────────
+  // 浄化したら、まだ残りがある場合にかぎり補充を予約する
+  if (!caught && purifiedThisFrame > 0 && spawnedCount < config.ghostCount) {
+    nextSpawnAt = millis(elapsedMs + config.nextSpawnDelayMs);
+  }
+
+  // ── 予約時刻に達したら出現させる ────────────
+  if (
+    pendingOutcome === null &&
+    !caught &&
+    nextSpawnAt !== null &&
+    elapsedMs >= nextSpawnAt
+  ) {
+    const next = spawnOne(config, spawnedCount, input.viewYaw, input.random);
+    // 浄化済みの個体はここで取り除く。常に 1 体だけを保つ
+    ghosts = [next];
+    spawnedCount += 1;
+    nextSpawnAt = null;
+    emitted.push({ type: 'GHOST_APPEARED', id: next.id });
+  }
+
+  // ── 勝敗の確定 ──────────────────────────────
   if (pendingOutcome === null) {
-    const caught = input.events.some((e) => e.type === 'PLAYER_CAUGHT');
-    const allBanished = ghosts.length > 0 && ghosts.every((g) => !isAlive(g));
+    const allSpawned = spawnedCount >= config.ghostCount;
+    const noneAlive = ghosts.every((g) => !isAlive(g));
+    const cleared = allSpawned && noneAlive && nextSpawnAt === null;
 
     if (caught) {
       pendingOutcome = 'FAILED';
       resultAt = millis(elapsedMs + config.resultDelayMs);
       emitted.push({ type: 'SESSION_FAILED', elapsedMs });
-    } else if (allBanished) {
+    } else if (cleared && config.ghostCount > 0) {
       pendingOutcome = 'CLEARED';
       resultAt = millis(elapsedMs + config.resultDelayMs);
       emitted.push({ type: 'SESSION_CLEARED', elapsedMs });
     }
   }
-
-  const purifiedCount = ghosts.filter((g) => !isAlive(g)).length;
 
   let phase = state.phase;
   let result = state.result;
@@ -139,13 +188,24 @@ export function reduce(input: ReduceInput): ReduceOutput {
       outcome: pendingOutcome,
       elapsedMs,
       purifiedCount,
-      totalCount: ghosts.length,
+      totalCount: config.ghostCount,
       isNewBest: false,
     };
   }
 
   return {
-    state: { ...state, phase, ghosts, elapsedMs, pendingOutcome, resultAt, result },
+    state: {
+      ...state,
+      phase,
+      ghosts,
+      elapsedMs,
+      spawnedCount,
+      purifiedCount,
+      nextSpawnAt,
+      pendingOutcome,
+      resultAt,
+      result,
+    },
     events: emitted,
   };
 }

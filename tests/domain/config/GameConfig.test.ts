@@ -53,21 +53,21 @@ describe('DEFAULT_CONFIG の整合性', () => {
     expect(DEFAULT_CONFIG.visibleHalfAngle).toBeLessThanOrEqual(horizontalHalfFov);
   });
 
-  it('既定のゴースト数で分離制約が成立する', () => {
-    expect(
-      DEFAULT_CONFIG.minSeparationAzimuth * DEFAULT_CONFIG.ghostCount,
-    ).toBeLessThanOrEqual(Math.PI * 2);
+  it('出現の禁止角は円周を食い尽くさない', () => {
+    // 視線を中心とする禁止扇が 180 度以上になると、出現可能な弧が消える
+    expect(DEFAULT_CONFIG.spawnMinAngleFromView).toBeLessThan(Math.PI);
   });
 
-  it('正面クリアランスは最大の隙間の半分から導かれる下限を満たす', () => {
-    const minWidestGap = (Math.PI * 2) / DEFAULT_CONFIG.ghostCount;
-    expect(DEFAULT_CONFIG.spawnFrontClearance).toBeLessThanOrEqual(
-      minWidestGap / 2 + 1e-9,
+  it('出現の禁止角は光錐より十分広い（出た瞬間に捕捉されない）', () => {
+    expect(DEFAULT_CONFIG.spawnMinAngleFromView).toBeGreaterThan(
+      DEFAULT_CONFIG.visibleHalfAngle * 2,
     );
   });
 
-  it('揺らぎの振幅は光錐より大きい（放置で捕捉されない）', () => {
-    expect(DEFAULT_CONFIG.wobbleAmplitude).toBeGreaterThan(DEFAULT_CONFIG.beamHalfAngle);
+  it('補充の間は演出時間より長い（無音の間が生まれる）', () => {
+    expect(DEFAULT_CONFIG.nextSpawnDelayMs).toBeGreaterThanOrEqual(
+      DEFAULT_CONFIG.banishAnimationMs,
+    );
   });
 
   it('スポーン距離は掴みかかり距離より十分遠い', () => {
@@ -76,10 +76,17 @@ describe('DEFAULT_CONFIG の整合性', () => {
     );
   });
 
-  it('残存数の速度倍率は残りが少ないほど大きい', () => {
-    const t = DEFAULT_CONFIG.speedByRemaining;
+  it('ウェーブが進むほど速度倍率が上がる', () => {
+    const t = DEFAULT_CONFIG.speedByWave;
+    expect(t.length).toBeGreaterThan(0);
     for (let i = 1; i < t.length; i++) {
-      expect(t[i]!).toBeLessThanOrEqual(t[i - 1]!);
+      expect(t[i]!).toBeGreaterThanOrEqual(t[i - 1]!);
     }
+  });
+
+  it('速度倍率のテーブルがゴースト総数をカバーしている', () => {
+    expect(DEFAULT_CONFIG.speedByWave.length).toBeGreaterThanOrEqual(
+      DEFAULT_CONFIG.ghostCount,
+    );
   });
 });

@@ -186,10 +186,15 @@ const radiusPx =
 | 捕捉中 | 輪郭が明るくなり、わずかに拡大 |
 | 照射 OFF | 輪郭が破線になる |
 
+### 残数表示
+
+画面左上の「残り N」は**セッションの残り総数**（`ghostCount - purifiedCount`）である。
+同時に存在するのは 1 体だけなので、画面内の生存数を出しても常に 1 にしかならず意味がない。
+
 ### 浄化ゲージ
 
 捕捉中のゴーストがあるときのみ、照準の直下に表示する。
-複数を同時に捕捉することは `minSeparationAzimuth` の制約により起きないため、常に 1 本でよい。
+同時に存在するのは 1 体だけなので、常に 1 本でよい。
 
 減衰中（捕捉が外れた直後）はゲージの色を変え、
 「まだ残っているが減っている」ことを示す。これにより
@@ -273,6 +278,7 @@ const radiusPx =
 | orient / screen / camQuat / yaw | 姿勢変換のデバッグ。横持ち時の `screen` 補正の検証 |
 | calib | キャリブレーションが効いているか |
 | accel / peak | [05.4](./05-infrastructure.md#54-motionport-の実装) のシェイク閾値の調整 |
+| wave / nextSpawn | 逐次出現の進行と補充待ち時間。何体目かと残りが一目で分かる |
 | ghosts 各行 | `GhostBehavior` の遷移の追跡。`vis` は `computeOpacity` の出力 |
 | audio | `AudioContext` の解錠確認 |
 

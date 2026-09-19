@@ -73,8 +73,9 @@ export class Hud {
   }
 
   update(view: GameView): void {
-    const alive = view.state.ghosts.filter((g) => g.phase !== 'BANISHED').length;
-    this.remaining.textContent = `残り ${alive}`;
+    // 同時には 1 体しかいないので、表示すべきは「セッションの残り総数」
+    const remaining = Math.max(0, this.config.ghostCount - view.state.purifiedCount);
+    this.remaining.textContent = `残り ${remaining}`;
     this.timer.textContent = formatDuration(view.state.elapsedMs);
 
     const lightOn = view.state.light === 'ON';

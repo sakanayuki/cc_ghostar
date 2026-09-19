@@ -305,12 +305,17 @@ AudioContext
   │
   ├─ listener（カメラの向きに追従）
   │
-  ├─ ghost-0 ──→ PannerNode(HRTF) ──→ GainNode ──┐
-  ├─ ghost-1 ──→ PannerNode(HRTF) ──→ GainNode ──┤
-  ├─ ghost-2 ──→ PannerNode(HRTF) ──→ GainNode ──┼─→ masterGain ─→ destination
-  │                                               │
-  └─ oneShot ──────────────────────→ GainNode ───┘
+  ├─ 現在の 1 体 ──→ PannerNode(HRTF) ──→ GainNode ──┐
+  │                                                   ├─→ masterGain ─→ limiter ─→ destination
+  └─ oneShot ────────────────────────→ GainNode ─────┘
 ```
+
+**鳴っている声は常に 1 つだけである。** ゴーストは逐次に出現し
+（[04.1](./04-game-rules.md#同時に存在するのは-1-体だけ)）、
+`GHOST_APPEARED` を受けた時点で前の音源を破棄して新しい音源を 1 つだけ繋ぐ。
+
+複数の音源を同時に鳴らすと、HRTF で定位した音が混ざって方向を聞き分けられなくなる。
+本作で空間音響が機能するのは、この「常に 1 音源」という制約があるからである。
 
 ### 呻き声の生成
 
@@ -348,7 +353,8 @@ export function createVoice(ctx: AudioContext, seed: number): AudioNode {
 ```
 
 個体ごとに `seed` を変え、帯域と揺らぎの周期をずらす。
-3 体の声が同一だと、音で個体を区別できず方向探索が成立しない。
+同時に鳴るのは 1 体だけだが、声が毎回同じだと「次が出た」ことに気づきにくい。
+音色が変わることで、新しい個体の出現が聴覚的に分かる。
 
 ### 空間定位
 
@@ -377,7 +383,7 @@ panner.rolloffFactor = 1.2;
 
 `HRTF` は計算コストが `equalpower` より高いが、**前後・上下の定位に必要**である。
 `equalpower` では左右しか判別できず、背後からの接近に気づけない。
-音源は最大 3 つに限られるため、コストは許容範囲に収まる。
+同時に鳴る音源は 1 つだけなので、コストは十分小さい。
 
 ### リスナーの向き
 

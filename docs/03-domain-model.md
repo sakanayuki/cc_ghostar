@@ -158,10 +158,18 @@ export type GamePhase =
 
 export interface SessionState {
   readonly phase: GamePhase;
+  /** 同時に存在するのは常に 1 体（設計書 04.1） */
   readonly ghosts: readonly Ghost[];
   readonly light: LightState;
-  readonly startedAt: Millis | null;
   readonly elapsedMs: Millis;
+  /** これまでに出現させた総数。ウェーブ番号は spawnedCount - 1 */
+  readonly spawnedCount: number;
+  /** これまでに浄化した総数 */
+  readonly purifiedCount: number;
+  /** この時刻を過ぎたら次の個体を出現させる。待機中でなければ null */
+  readonly nextSpawnAt: Millis | null;
+  readonly pendingOutcome: Outcome | null;
+  readonly resultAt: Millis | null;
   readonly result: SessionResult | null;
 }
 

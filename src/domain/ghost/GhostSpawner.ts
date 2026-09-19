@@ -7,96 +7,60 @@ import type { Ghost } from './Ghost';
 const TAU = Math.PI * 2;
 
 /**
- * 円周を n 個の隙間に分割する。各隙間は必ず minSeparation 以上になる。
+ * 現在の視線方向から一定以上離れた方位を選ぶ。
  *
- * 棄却サンプリングを使わない。最小分離角が大きいと実行可能領域が極端に
- * 狭くなり、試行が失敗してフォールバックへ落ちるため（設計書 04.7）。
- * 隙間そのものを構成すれば制約は定義上満たされる。
+ * 視線を中心とする「出現禁止の扇」の外側、すなわち残りの弧の中から
+ * 一様に選ぶ。棄却サンプリングを使わないので必ず 1 回で決まる
+ * （設計書 04.7）。
  */
-function pickGaps(count: number, minSeparation: number, random: () => number): number[] {
-  // 要求された分離角が円周に収まらない場合は等分まで緩める
-  const base = Math.min(minSeparation, TAU / count);
-  const slack = TAU - base * count;
-
-  const weights: number[] = [];
-  let total = 0;
-  for (let i = 0; i < count; i++) {
-    const w = random();
-    weights.push(w);
-    total += w;
-  }
-  if (total <= 0) {
-    return new Array<number>(count).fill(TAU / count);
-  }
-
-  return weights.map((w) => base + (w / total) * slack);
+export function pickSpawnAzimuth(
+  viewYaw: Radians,
+  minAngleFromView: Radians,
+  random: () => number,
+): Radians {
+  // 禁止扇の半角。円周を食い尽くさないよう上限を設ける
+  const forbidden = Math.min(Math.abs(minAngleFromView), Math.PI * 0.9);
+  // 許される弧の長さ（視線の裏側を中心とする弧）
+  const allowed = TAU - forbidden * 2;
+  // 視線の反対側を起点に、許容弧の中から一様に選ぶ
+  const offset = forbidden + random() * allowed;
+  return normalizeAngle(viewYaw + offset) as Radians;
 }
 
 /**
- * 配置全体を回転させ、最も広い隙間の中心を正面（方位 0）へ持ってくる。
+ * ゴーストを 1 体生成する。乱数は引数で受け取るため純粋関数である。
  *
- * キャリブレーション直後、プレイヤーは正面を向いている。そこにゴーストが
- * いると開始と同時に捕捉が始まり、探索の体験が失われる（設計書 04.7）。
- * 得られる正面クリアランスは「最大の隙間の半分」であり、ゴースト数が
- * 多いほど小さくなる。
+ * 同時に存在するのは常に 1 体であり、浄化されると次が呼ばれる
+ * （設計書 04.1）。
+ *
+ * @param index 0 起点の通し番号。ID と速度倍率の決定に使う
+ * @param viewYaw 生成時点でプレイヤーが向いているワールド方位
  */
-function frontClearingRotation(
-  azimuths: readonly number[],
-  gaps: readonly number[],
-): number {
-  let widestIndex = 0;
-  let widest = -1;
-  for (let i = 0; i < gaps.length; i++) {
-    const gap = gaps[i] as number;
-    if (gap > widest) {
-      widest = gap;
-      widestIndex = i;
-    }
-  }
-  // gaps[i] は azimuths[i] から次の個体までの隙間
-  const start = azimuths[widestIndex] as number;
-  return -(start + widest / 2);
-}
+export function spawnOne(
+  config: GameConfig,
+  index: number,
+  viewYaw: Radians,
+  random: () => number,
+): Ghost {
+  const azimuth = pickSpawnAzimuth(viewYaw, config.spawnMinAngleFromView, random);
 
-export function spawn(config: GameConfig, random: () => number): readonly Ghost[] {
-  const count = Math.max(0, Math.floor(config.ghostCount));
-  if (count === 0) return [];
-
-  const gaps = pickGaps(count, config.minSeparationAzimuth, random);
-
-  const raw: number[] = [];
-  let cursor = 0;
-  for (let i = 0; i < count; i++) {
-    raw.push(cursor);
-    cursor += gaps[i] as number;
-  }
-
-  const rotation = frontClearingRotation(raw, gaps);
-
-  return raw.map((azimuthRaw, i) => {
-    const azimuth = normalizeAngle(azimuthRaw + rotation) as Radians;
-    return {
-      id: ghostId(`ghost-${i}`),
-      azimuth,
-      baseAzimuth: azimuth,
-      distance: lerp(
-        config.spawnDistanceMin,
-        config.spawnDistanceMax,
-        random(),
-      ) as Meters,
-      heightOffset: lerp(
-        config.heightOffsetMin,
-        config.heightOffsetMax,
-        random(),
-      ) as Meters,
-      phase: 'APPROACHING',
-      purify: 0,
-      grabStartedAt: null,
-      escapeCount: 0,
-      wobbleSeed: random() * TAU,
-      banishedAt: null,
-    } satisfies Ghost;
-  });
+  return {
+    id: ghostId(`ghost-${index}`),
+    azimuth,
+    baseAzimuth: azimuth,
+    distance: lerp(config.spawnDistanceMin, config.spawnDistanceMax, random()) as Meters,
+    heightOffset: lerp(
+      config.heightOffsetMin,
+      config.heightOffsetMax,
+      random(),
+    ) as Meters,
+    phase: 'APPROACHING',
+    purify: 0,
+    grabStartedAt: null,
+    escapeCount: 0,
+    wobbleSeed: random() * TAU,
+    banishedAt: null,
+  };
 }
 
 /** 較正のやり直しに合わせてゴーストの方位を回す（設計書 03.4） */

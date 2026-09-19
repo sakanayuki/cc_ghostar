@@ -68,6 +68,8 @@ export class DebugHud {
       '',
       `accel    ${accel.current.toFixed(1)}  (peak ${accel.peak.toFixed(1)})`,
       '',
+      `wave     ${view.state.spawnedCount}/${game.totalGhosts}  purified ${view.state.purifiedCount}`,
+      `nextSpawn ${view.state.nextSpawnAt === null ? '-' : Math.max(0, view.state.nextSpawnAt - view.state.elapsedMs).toFixed(0) + 'ms'}`,
       `ghosts   ${view.state.ghosts.filter((g) => g.phase !== 'BANISHED').length} alive`,
     ];
 

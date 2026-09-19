@@ -29,15 +29,17 @@ const mkGhost = (p: Partial<Ghost> = {}): Ghost => ({
 /** 指定方位を向く光軸 */
 const axisAt = (rad: number): Vector3 => new Vector3(Math.sin(rad), 0, -Math.cos(rad));
 
+// exactOptionalPropertyTypes の下では Partial のスプレッドが必須プロパティを
+// optional に落とすため、各フィールドを明示的に解決する
 const mkInput = (p: Partial<StepInput> = {}): StepInput => ({
-  ghosts: [mkGhost()],
-  beamAxis: axisAt(0),
-  light: 'ON',
-  shook: false,
-  dt: 1 / 60,
-  elapsedMs: millis(0),
-  config: C,
-  ...p,
+  ghosts: p.ghosts ?? [mkGhost()],
+  beamAxis: p.beamAxis ?? axisAt(0),
+  light: p.light ?? 'ON',
+  shook: p.shook ?? false,
+  dt: p.dt ?? 1 / 60,
+  elapsedMs: p.elapsedMs ?? millis(0),
+  waveIndex: p.waveIndex ?? 0,
+  config: p.config ?? C,
 });
 
 const has = (events: readonly DomainEvent[], type: DomainEvent['type']): boolean =>
@@ -147,29 +149,42 @@ describe('approachSpeedOf', () => {
     expect(off / on).toBeCloseTo(C.lightOffSpeedMultiplier, 6);
   });
 
-  it('残りが少ないほど速くなる', () => {
-    const three = approachSpeedOf(mkInput({ ghosts: [mkGhost(), mkGhost(), mkGhost()] }));
-    const one = approachSpeedOf(mkInput({ ghosts: [mkGhost()] }));
-    expect(one).toBeGreaterThan(three);
+  it('後のウェーブほど速くなる', () => {
+    const first = approachSpeedOf(mkInput({ waveIndex: 0 }));
+    const last = approachSpeedOf(mkInput({ waveIndex: C.speedByWave.length - 1 }));
+    expect(last).toBeGreaterThan(first);
   });
 
-  it('BANISHED は残存数に数えない', () => {
-    const withDead = approachSpeedOf(
-      mkInput({
-        ghosts: [
-          mkGhost(),
-          mkGhost({ phase: 'BANISHED' }),
-          mkGhost({ phase: 'BANISHED' }),
-        ],
-      }),
+  it('同時に何体いても速度は変わらない（逐次出現のため残存数を見ない）', () => {
+    const alone = approachSpeedOf(mkInput({ ghosts: [mkGhost()], waveIndex: 1 }));
+    const crowd = approachSpeedOf(
+      mkInput({ ghosts: [mkGhost(), mkGhost(), mkGhost()], waveIndex: 1 }),
     );
-    const alone = approachSpeedOf(mkInput({ ghosts: [mkGhost()] }));
-    expect(withDead).toBeCloseTo(alone, 6);
+    expect(crowd).toBeCloseTo(alone, 6);
   });
 
-  it('ゴースト数がテーブルより多くても壊れない', () => {
-    const many = Array.from({ length: 8 }, () => mkGhost());
-    expect(Number.isFinite(approachSpeedOf(mkInput({ ghosts: many })))).toBe(true);
+  it('ウェーブ番号がテーブルより大きくても壊れない', () => {
+    const clamped = approachSpeedOf(mkInput({ waveIndex: C.speedByWave.length - 1 }));
+    expect(approachSpeedOf(mkInput({ waveIndex: 99 }))).toBeCloseTo(clamped, 6);
+  });
+
+  it('負のウェーブ番号でも壊れない', () => {
+    expect(approachSpeedOf(mkInput({ waveIndex: -1 }))).toBeCloseTo(
+      approachSpeedOf(mkInput({ waveIndex: 0 })),
+      6,
+    );
+  });
+
+  it('非有限値が来ても先頭の倍率にフォールバックする', () => {
+    const first = approachSpeedOf(mkInput({ waveIndex: 0 }));
+    expect(approachSpeedOf(mkInput({ waveIndex: NaN }))).toBeCloseTo(first, 6);
+  });
+
+  it('小数のウェーブ番号は切り捨てる', () => {
+    expect(approachSpeedOf(mkInput({ waveIndex: 1.9 }))).toBeCloseTo(
+      approachSpeedOf(mkInput({ waveIndex: 1 })),
+      6,
+    );
   });
 });
 

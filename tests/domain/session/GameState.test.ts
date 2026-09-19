@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '@/domain/config/GameConfig';
+import type { GameConfig } from '@/domain/config/GameConfig';
 import type { Ghost } from '@/domain/ghost/Ghost';
 import type { DomainEvent } from '@/domain/ghost/GhostEvents';
 import {
@@ -11,9 +12,11 @@ import {
 } from '@/domain/session/GameState';
 import type { GamePhase, SessionState } from '@/domain/session/GameState';
 import { formatDuration } from '@/domain/session/SessionResult';
+import { angleDelta } from '@/domain/math/Angles';
 import { ghostId, meters, millis, radians } from '@/shared/types';
 
 const C = DEFAULT_CONFIG;
+const rng = () => 0.5;
 
 const mkGhost = (id: string, phase: Ghost['phase'] = 'APPROACHING'): Ghost => ({
   id: ghostId(id),
@@ -29,8 +32,30 @@ const mkGhost = (id: string, phase: Ghost['phase'] = 'APPROACHING'): Ghost => ({
   banishedAt: phase === 'BANISHED' ? millis(0) : null,
 });
 
-const playing = (ghosts: readonly Ghost[]): SessionState =>
-  startSession({ ...initialState(), phase: 'CALIBRATION' }, ghosts);
+const playing = (first: Ghost): SessionState =>
+  startSession({ ...initialState(), phase: 'CALIBRATION' }, first);
+
+const run = (
+  state: SessionState,
+  ghosts: readonly Ghost[],
+  events: readonly DomainEvent[],
+  elapsedMs: number,
+  config: GameConfig = C,
+) =>
+  reduce({
+    state,
+    ghosts,
+    events,
+    elapsedMs: millis(elapsedMs),
+    viewYaw: radians(0),
+    random: rng,
+    config,
+  });
+
+const purified = (id: string): DomainEvent => ({
+  type: 'GHOST_PURIFIED',
+  id: ghostId(id),
+});
 
 describe('状態遷移', () => {
   it('設計書 04.3 の主要な経路を許可する', () => {
@@ -45,9 +70,7 @@ describe('状態遷移', () => {
       ['PLAYING', 'RESULT'],
       ['RESULT', 'TITLE'],
     ];
-    for (const [from, to] of path) {
-      expect(canTransition(from, to)).toBe(true);
-    }
+    for (const [from, to] of path) expect(canTransition(from, to)).toBe(true);
   });
 
   it('2 回目以降はタイトルから直接キャリブレーションへ行ける', () => {
@@ -78,169 +101,224 @@ describe('状態遷移', () => {
 });
 
 describe('startSession', () => {
-  it('世界を作り直し、計時と結果をリセットする', () => {
+  it('1 体だけを出した状態で始まる', () => {
+    const s = playing(mkGhost('a'));
+    expect(s.phase).toBe('PLAYING');
+    expect(s.ghosts).toHaveLength(1);
+    expect(s.spawnedCount).toBe(1);
+    expect(s.purifiedCount).toBe(0);
+    expect(s.nextSpawnAt).toBeNull();
+    expect(s.light).toBe('ON');
+  });
+
+  it('前回の結果と計時をリセットする', () => {
     const previous: SessionState = {
       ...initialState(),
       phase: 'CALIBRATION',
       elapsedMs: millis(9999),
+      spawnedCount: 3,
+      purifiedCount: 2,
       pendingOutcome: 'FAILED',
       resultAt: millis(1),
-      result: {
-        outcome: 'FAILED',
-        elapsedMs: millis(9999),
-        purifiedCount: 1,
-        totalCount: 3,
-        isNewBest: false,
-      },
     };
-    const next = startSession(previous, [mkGhost('a')]);
-
-    expect(next.phase).toBe('PLAYING');
+    const next = startSession(previous, mkGhost('a'));
     expect(next.elapsedMs).toBe(0);
+    expect(next.spawnedCount).toBe(1);
+    expect(next.purifiedCount).toBe(0);
     expect(next.pendingOutcome).toBeNull();
-    expect(next.resultAt).toBeNull();
     expect(next.result).toBeNull();
-    expect(next.light).toBe('ON');
   });
 });
 
-describe('reduce: 勝敗の確定', () => {
-  it('全滅させるとクリアが確定する', () => {
-    const ghosts = [mkGhost('a', 'BANISHED'), mkGhost('b', 'BANISHED')];
+describe('逐次出現', () => {
+  it('浄化しても即座には次が出ず、遅延が予約される', () => {
+    const banished = [mkGhost('ghost-0', 'BANISHED')];
+    const out = run(playing(mkGhost('ghost-0')), banished, [purified('ghost-0')], 1000);
+
+    expect(out.state.nextSpawnAt).toBe(1000 + C.nextSpawnDelayMs);
+    expect(out.state.spawnedCount).toBe(1);
+    expect(out.state.purifiedCount).toBe(1);
+    expect(out.events.some((e) => e.type === 'GHOST_APPEARED')).toBe(false);
+  });
+
+  it('遅延が過ぎると次の 1 体が出現する', () => {
+    const banished = [mkGhost('ghost-0', 'BANISHED')];
+    const scheduled = run(
+      playing(mkGhost('ghost-0')),
+      banished,
+      [purified('ghost-0')],
+      1000,
+    ).state;
+
+    const out = run(scheduled, banished, [], 1000 + C.nextSpawnDelayMs);
+
+    expect(out.state.spawnedCount).toBe(2);
+    expect(out.state.nextSpawnAt).toBeNull();
+    expect(out.events.some((e) => e.type === 'GHOST_APPEARED')).toBe(true);
+  });
+
+  it('同時に存在するのは常に 1 体', () => {
+    const banished = [mkGhost('ghost-0', 'BANISHED')];
+    const scheduled = run(
+      playing(mkGhost('ghost-0')),
+      banished,
+      [purified('ghost-0')],
+      0,
+    ).state;
+    const out = run(scheduled, banished, [], C.nextSpawnDelayMs);
+
+    expect(out.state.ghosts).toHaveLength(1);
+    expect(out.state.ghosts[0]!.phase).toBe('APPROACHING');
+    expect(out.state.ghosts[0]!.id).toBe('ghost-1');
+  });
+
+  it('次の個体は現在の視線から離れた方向に出る', () => {
+    const banished = [mkGhost('ghost-0', 'BANISHED')];
+    const viewYaw = radians(2.0);
+    const scheduled = reduce({
+      state: playing(mkGhost('ghost-0')),
+      ghosts: banished,
+      events: [purified('ghost-0')],
+      elapsedMs: millis(0),
+      viewYaw,
+      random: rng,
+      config: C,
+    }).state;
+
     const out = reduce({
-      state: playing(ghosts),
-      ghosts,
+      state: scheduled,
+      ghosts: banished,
       events: [],
-      elapsedMs: millis(5000),
+      elapsedMs: millis(C.nextSpawnDelayMs),
+      viewYaw,
+      random: rng,
       config: C,
     });
 
+    const spawned = out.state.ghosts[0]!;
+    expect(Math.abs(angleDelta(viewYaw, spawned.azimuth))).toBeGreaterThanOrEqual(
+      C.spawnMinAngleFromView - 1e-9,
+    );
+  });
+
+  it('最後の 1 体を浄化したら補充しない', () => {
+    let state = playing(mkGhost('ghost-0'));
+    state = { ...state, spawnedCount: C.ghostCount, purifiedCount: C.ghostCount - 1 };
+    const banished = [mkGhost('ghost-2', 'BANISHED')];
+
+    const out = run(state, banished, [purified('ghost-2')], 5000);
+    expect(out.state.nextSpawnAt).toBeNull();
+    expect(out.state.spawnedCount).toBe(C.ghostCount);
+  });
+});
+
+describe('勝敗の確定', () => {
+  it('全体を浄化しきるとクリアが確定する', () => {
+    let state = playing(mkGhost('ghost-0'));
+    state = { ...state, spawnedCount: C.ghostCount, purifiedCount: C.ghostCount - 1 };
+    const banished = [mkGhost('ghost-2', 'BANISHED')];
+
+    const out = run(state, banished, [purified('ghost-2')], 5000);
     expect(out.state.pendingOutcome).toBe('CLEARED');
     expect(out.events.some((e) => e.type === 'SESSION_CLEARED')).toBe(true);
   });
 
-  it('捕まると敗北が確定する', () => {
-    const ghosts = [mkGhost('a')];
-    const events: DomainEvent[] = [{ type: 'PLAYER_CAUGHT', id: ghostId('a') }];
-    const out = reduce({
-      state: playing(ghosts),
-      ghosts,
-      events,
-      elapsedMs: millis(4000),
-      config: C,
-    });
+  it('補充待ちの間はクリアと誤判定しない', () => {
+    const banished = [mkGhost('ghost-0', 'BANISHED')];
+    const out = run(playing(mkGhost('ghost-0')), banished, [purified('ghost-0')], 100);
+    expect(out.state.pendingOutcome).toBeNull();
+  });
 
+  it('捕まると敗北が確定する', () => {
+    const ghosts = [mkGhost('ghost-0')];
+    const out = run(
+      playing(ghosts[0]!),
+      ghosts,
+      [{ type: 'PLAYER_CAUGHT', id: ghostId('ghost-0') }],
+      4000,
+    );
     expect(out.state.pendingOutcome).toBe('FAILED');
     expect(out.events.some((e) => e.type === 'SESSION_FAILED')).toBe(true);
   });
 
-  it('捕獲はクリアより優先される', () => {
-    const ghosts = [mkGhost('a', 'BANISHED')];
-    const events: DomainEvent[] = [{ type: 'PLAYER_CAUGHT', id: ghostId('a') }];
-    const out = reduce({
-      state: playing(ghosts),
-      ghosts,
-      events,
-      elapsedMs: millis(1000),
-      config: C,
-    });
-    expect(out.state.pendingOutcome).toBe('FAILED');
-  });
+  it('捕まったら補充は起きない', () => {
+    let state = playing(mkGhost('ghost-0'));
+    state = { ...state, nextSpawnAt: millis(100) };
+    const ghosts = [mkGhost('ghost-0')];
 
-  it('ゴーストが 0 体のときにクリアと誤判定しない', () => {
-    const out = reduce({
-      state: playing([]),
-      ghosts: [],
-      events: [],
-      elapsedMs: millis(100),
-      config: C,
-    });
-    expect(out.state.pendingOutcome).toBeNull();
+    const out = run(
+      state,
+      ghosts,
+      [{ type: 'PLAYER_CAUGHT', id: ghostId('ghost-0') }],
+      500,
+    );
+    expect(out.state.spawnedCount).toBe(1);
+    expect(out.events.some((e) => e.type === 'GHOST_APPEARED')).toBe(false);
   });
 
   it('一度確定した勝敗は上書きされない', () => {
-    const ghosts = [mkGhost('a')];
-    const first = reduce({
-      state: playing(ghosts),
+    const ghosts = [mkGhost('ghost-0')];
+    const first = run(
+      playing(ghosts[0]!),
       ghosts,
-      events: [{ type: 'PLAYER_CAUGHT', id: ghostId('a') }],
-      elapsedMs: millis(1000),
-      config: C,
-    });
-    const second = reduce({
-      state: first.state,
-      ghosts: [mkGhost('a', 'BANISHED')],
-      events: [],
-      elapsedMs: millis(1100),
-      config: C,
-    });
+      [{ type: 'PLAYER_CAUGHT', id: ghostId('ghost-0') }],
+      1000,
+    );
+    const second = run(first.state, [mkGhost('ghost-0', 'BANISHED')], [], 1100);
 
     expect(second.state.pendingOutcome).toBe('FAILED');
     expect(second.events).toHaveLength(0);
   });
+
+  it('ゴースト 0 体の設定ではクリアと誤判定しない', () => {
+    const config: GameConfig = { ...C, ghostCount: 0 };
+    const state = { ...playing(mkGhost('a')), spawnedCount: 0, ghosts: [] };
+    const out = run(state, [], [], 100, config);
+    expect(out.state.pendingOutcome).toBeNull();
+  });
 });
 
-describe('reduce: 結果画面への遅延', () => {
+describe('結果画面への遅延', () => {
   it('確定直後はまだ PLAYING のまま（演出のため）', () => {
-    const ghosts = [mkGhost('a', 'BANISHED')];
-    const out = reduce({
-      state: playing(ghosts),
-      ghosts,
-      events: [],
-      elapsedMs: millis(1000),
-      config: C,
-    });
+    let state = playing(mkGhost('ghost-0'));
+    state = { ...state, spawnedCount: C.ghostCount, purifiedCount: C.ghostCount - 1 };
+    const out = run(state, [mkGhost('ghost-2', 'BANISHED')], [purified('ghost-2')], 1000);
 
     expect(out.state.phase).toBe('PLAYING');
     expect(out.state.result).toBeNull();
     expect(out.state.resultAt).toBe(1000 + C.resultDelayMs);
   });
 
-  it('演出時間が過ぎると RESULT へ遷移する', () => {
-    const ghosts = [mkGhost('a', 'BANISHED'), mkGhost('b', 'BANISHED')];
-    const confirmed = reduce({
-      state: playing(ghosts),
-      ghosts,
-      events: [],
-      elapsedMs: millis(1000),
-      config: C,
-    }).state;
+  it('演出時間が過ぎると RESULT へ遷移し、総数と浄化数が入る', () => {
+    let state = playing(mkGhost('ghost-0'));
+    state = { ...state, spawnedCount: C.ghostCount, purifiedCount: C.ghostCount - 1 };
+    const banished = [mkGhost('ghost-2', 'BANISHED')];
 
-    const out = reduce({
-      state: confirmed,
-      ghosts,
-      events: [],
-      elapsedMs: millis(1000 + C.resultDelayMs),
-      config: C,
-    });
+    const confirmed = run(state, banished, [purified('ghost-2')], 1000).state;
+    const out = run(confirmed, banished, [], 1000 + C.resultDelayMs);
 
     expect(out.state.phase).toBe('RESULT');
     expect(out.state.result?.outcome).toBe('CLEARED');
-    expect(out.state.result?.purifiedCount).toBe(2);
-    expect(out.state.result?.totalCount).toBe(2);
+    expect(out.state.result?.purifiedCount).toBe(C.ghostCount);
+    expect(out.state.result?.totalCount).toBe(C.ghostCount);
   });
 
-  it('敗北時の浄化数が正しく数えられる', () => {
-    const ghosts = [mkGhost('a', 'BANISHED'), mkGhost('b'), mkGhost('c')];
-    const confirmed = reduce({
-      state: playing(ghosts),
-      ghosts,
-      events: [{ type: 'PLAYER_CAUGHT', id: ghostId('b') }],
-      elapsedMs: millis(2000),
-      config: C,
-    }).state;
+  it('敗北時は浄化済みの数がそのまま残る', () => {
+    let state = playing(mkGhost('ghost-1'));
+    state = { ...state, spawnedCount: 2, purifiedCount: 1 };
+    const ghosts = [mkGhost('ghost-1')];
 
-    const out = reduce({
-      state: confirmed,
+    const confirmed = run(
+      state,
       ghosts,
-      events: [],
-      elapsedMs: millis(2000 + C.resultDelayMs),
-      config: C,
-    });
+      [{ type: 'PLAYER_CAUGHT', id: ghostId('ghost-1') }],
+      2000,
+    ).state;
+    const out = run(confirmed, ghosts, [], 2000 + C.resultDelayMs);
 
     expect(out.state.result?.outcome).toBe('FAILED');
     expect(out.state.result?.purifiedCount).toBe(1);
-    expect(out.state.result?.totalCount).toBe(3);
+    expect(out.state.result?.totalCount).toBe(C.ghostCount);
   });
 });
 

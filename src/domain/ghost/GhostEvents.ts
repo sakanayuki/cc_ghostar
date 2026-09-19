@@ -5,6 +5,7 @@ import type { GhostId, Millis } from '@/shared/types';
  * ドメインは「何が起きたか」だけを宣言し、その結果どう鳴らすかを知らない（設計書 02.7）。
  */
 export type DomainEvent =
+  | { readonly type: 'GHOST_APPEARED'; readonly id: GhostId }
   | { readonly type: 'GHOST_HELD'; readonly id: GhostId }
   | { readonly type: 'GHOST_RELEASED'; readonly id: GhostId }
   | { readonly type: 'GHOST_PURIFIED'; readonly id: GhostId }

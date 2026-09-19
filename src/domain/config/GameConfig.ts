@@ -7,13 +7,23 @@ const m = (v: number): Meters => v as Meters;
 /** 調整可能な値の集約。他のファイルにマジックナンバーを置かないこと（設計書 04.4） */
 export interface GameConfig {
   // ── 世界構成 ──────────────────────────────
+  /**
+   * 1 プレイで登場するゴーストの総数。
+   *
+   * 同時には 1 体しか存在しない。1 体を浄化すると次が別の方向に現れる
+   * （設計書 04.1）。同時に複数いると複数の声が混ざり、空間音響で方向を
+   * 特定できなくなるため。
+   */
   readonly ghostCount: number;
   readonly spawnDistanceMin: Meters;
   readonly spawnDistanceMax: Meters;
-  /** 個体間の最小方位差。固まって出現するのを防ぐ */
-  readonly minSeparationAzimuth: Radians;
-  /** スポーン時、正面から最低これだけ離す */
-  readonly spawnFrontClearance: Radians;
+  /**
+   * 出現時、プレイヤーが現在向いている方向から最低これだけ離す。
+   *
+   * 逐次出現では「次がどこに出たか」を音で探すことがゲームの中心になる。
+   * 見ている方向に出てしまうと探す行為が発生しない。
+   */
+  readonly spawnMinAngleFromView: Radians;
   readonly heightOffsetMin: Meters;
   readonly heightOffsetMax: Meters;
   /** プレイヤーの目の高さ */
@@ -41,8 +51,13 @@ export interface GameConfig {
   readonly approachSpeed: number;
   /** 照射 OFF 中に掛かる速度倍率 */
   readonly lightOffSpeedMultiplier: number;
-  /** 残存数に応じた速度倍率。index = 残り体数 - 1 */
-  readonly speedByRemaining: readonly number[];
+  /**
+   * 何体目かに応じた速度倍率。index = 0 起点のウェーブ番号。
+   *
+   * 逐次出現では常に残り 1 体なので、残存数を基準にすると倍率が変化せず
+   * 難易度カーブが作れない。進行度で上げる。
+   */
+  readonly speedByWave: readonly number[];
 
   // ── 方位の揺らぎ ──────────────────────────
   readonly wobbleAmplitude: Radians;
@@ -52,6 +67,12 @@ export interface GameConfig {
   readonly purifyDurationSec: number;
   readonly purifyDecayPerSec: number;
   readonly banishAnimationMs: number;
+  /**
+   * 浄化してから次の個体が現れるまでの間。
+   *
+   * 無音の間を置くことで、次の声が鳴り始めた方向が際立つ。
+   */
+  readonly nextSpawnDelayMs: number;
 
   // ── 掴みかかりと振り払い ──────────────────
   readonly grabDistance: Meters;
@@ -68,8 +89,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   ghostCount: 3,
   spawnDistanceMin: m(6),
   spawnDistanceMax: m(10),
-  minSeparationAzimuth: deg(100),
-  spawnFrontClearance: deg(60),
+  spawnMinAngleFromView: deg(90),
   heightOffsetMin: m(-0.25),
   heightOffsetMax: m(0.15),
   eyeHeight: 1.6,
@@ -80,7 +100,7 @@ export const DEFAULT_CONFIG: GameConfig = {
 
   approachSpeed: 0.22,
   lightOffSpeedMultiplier: 1.6,
-  speedByRemaining: [1.7, 1.35, 1.0],
+  speedByWave: [1.0, 1.3, 1.6],
 
   wobbleAmplitude: deg(30),
   wobbleFrequencyHz: 0.08,
@@ -88,6 +108,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   purifyDurationSec: 3.5,
   purifyDecayPerSec: 0.15,
   banishAnimationMs: 1200,
+  nextSpawnDelayMs: 1600,
 
   grabDistance: m(0.8),
   grabGraceMs: 1500,

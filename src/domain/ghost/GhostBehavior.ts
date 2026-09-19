@@ -6,7 +6,6 @@ import { isInsideCone } from '@/domain/math/BeamCone';
 import { directionTo, toPosition } from '@/domain/math/Spherical';
 import type { Meters, Millis, Radians } from '@/shared/types';
 import type { Ghost } from './Ghost';
-import { isAlive } from './Ghost';
 import type { DomainEvent } from './GhostEvents';
 
 export interface StepInput {
@@ -20,6 +19,8 @@ export interface StepInput {
   readonly dt: number;
   /** セッション開始からの経過ミリ秒 */
   readonly elapsedMs: Millis;
+  /** 0 起点のウェーブ番号。速度倍率の決定に使う */
+  readonly waveIndex: number;
   readonly config: GameConfig;
 }
 
@@ -49,20 +50,27 @@ export function wobbleAzimuth(
   return normalizeAngle(baseAzimuth + wave * config.wobbleAmplitude) as Radians;
 }
 
-/** 接近速度。残存数と照射状態で倍率が掛かる（設計書 04.5） */
+/**
+ * 接近速度。ウェーブ番号と照射状態で倍率が掛かる（設計書 04.5）。
+ *
+ * 逐次出現では常に残り 1 体なので、残存数ではなく進行度を基準にする。
+ */
 export function approachSpeedOf(input: StepInput): number {
-  const table = input.config.speedByRemaining;
-  const remaining = input.ghosts.filter(isAlive).length;
+  const table = input.config.speedByWave;
 
-  let byRemaining = 1;
+  let byWave = 1;
   if (table.length > 0) {
-    const idx = Math.min(Math.max(remaining, 1), table.length) - 1;
-    byRemaining = table[idx] ?? 1;
+    // 非有限値が来ても黙って 1 倍にならないようにする。
+    // 添字計算が NaN になると table[NaN] が undefined となり、難易度が
+    // 上がらないまま気づけないため
+    const wave = Number.isFinite(input.waveIndex) ? input.waveIndex : 0;
+    const idx = Math.min(Math.max(Math.floor(wave), 0), table.length - 1);
+    byWave = table[idx] ?? 1;
   }
 
   const byLight = input.light === 'OFF' ? input.config.lightOffSpeedMultiplier : 1;
 
-  return input.config.approachSpeed * byRemaining * byLight;
+  return input.config.approachSpeed * byWave * byLight;
 }
 
 /** ゴーストが光錐に捕捉されているか */

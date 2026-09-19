@@ -4,9 +4,10 @@ import { animationOf, isAlive } from '@/domain/ghost/Ghost';
 import type { Ghost } from '@/domain/ghost/Ghost';
 import { step } from '@/domain/ghost/GhostBehavior';
 import type { DomainEvent } from '@/domain/ghost/GhostEvents';
-import { recalibrate, spawn } from '@/domain/ghost/GhostSpawner';
+import { recalibrate, spawnOne } from '@/domain/ghost/GhostSpawner';
 import { toggleLight } from '@/domain/light/LightState';
 import { clamp01 } from '@/domain/math/Angles';
+import { extractYaw } from '@/domain/math/Attitude';
 import { beamAxis, computeOpacity } from '@/domain/math/BeamCone';
 import { directionTo, toPosition } from '@/domain/math/Spherical';
 import {
@@ -16,7 +17,7 @@ import {
   transition,
 } from '@/domain/session/GameState';
 import type { GamePhase, SessionState } from '@/domain/session/GameState';
-import { millis } from '@/shared/types';
+import { millis, radians } from '@/shared/types';
 import type { Millis } from '@/shared/types';
 import { CalibrationService } from './CalibrationService';
 import { GameLoop } from './GameLoop';
@@ -122,6 +123,10 @@ export class Game {
     return { fps: this.loop.fps(), minFps: this.loop.minFps() };
   }
 
+  get totalGhosts(): number {
+    return this.deps.config.ghostCount;
+  }
+
   get calibrationService(): CalibrationService {
     return this.calibration;
   }
@@ -197,11 +202,12 @@ export class Game {
     const attitude = this.deps.orientation.read();
     if (attitude !== null) this.calibration.calibrate(attitude);
 
-    const ghosts = spawn(this.deps.config, this.deps.random);
-    this.state = startSession(this.state, ghosts);
+    // 較正直後のワールド方位は定義上 0。1 体目もそこから離して出す
+    const first = spawnOne(this.deps.config, 0, radians(0), this.deps.random);
+    this.state = startSession(this.state, first);
 
     this.deps.audio.clearGhosts();
-    for (const g of ghosts) this.deps.audio.attachGhost(g.id);
+    this.deps.audio.attachGhost(first.id);
 
     this.sessionStartedAt = this.deps.clock.now();
     this.pausedElapsed = millis(0);
@@ -327,6 +333,8 @@ export class Game {
 
     // 2. ドメインの遷移
     const elapsedMs = millis(nowMs - this.sessionStartedAt);
+    const viewYaw = extractYaw(world);
+
     const stepped = step({
       ghosts: this.state.ghosts,
       beamAxis: _axis,
@@ -334,6 +342,7 @@ export class Game {
       shook: this.deps.motion.consumeShake(),
       dt: dtSec,
       elapsedMs,
+      waveIndex: Math.max(0, this.state.spawnedCount - 1),
       config,
     });
 
@@ -342,6 +351,8 @@ export class Game {
       ghosts: stepped.ghosts,
       events: stepped.events,
       elapsedMs,
+      viewYaw,
+      random: this.deps.random,
       config,
     });
 
@@ -418,6 +429,11 @@ export class Game {
 
     for (const event of events) {
       switch (event.type) {
+        case 'GHOST_APPEARED':
+          // 同時に鳴るのは常に 1 体。これが方向を聞き分けられる条件になる
+          audio.clearGhosts();
+          audio.attachGhost(event.id);
+          break;
         case 'GHOST_PURIFIED':
           audio.playOneShot('PURIFY_COMPLETE');
           audio.detachGhost(event.id);

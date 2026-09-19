@@ -13,6 +13,20 @@
 | 3 体すべての浄化を完了する | `CLEARED` |
 | いずれか 1 体に捕まる | `FAILED` |
 
+### 同時に存在するのは 1 体だけ
+
+ゴーストは**逐次に出現する**。1 体を浄化すると短い静寂を挟んで次の 1 体が別の方向に現れ、
+これを 3 回繰り返すとクリアになる。
+
+この構造を採る理由は空間音響にある。複数の個体が同時に声を出すと、
+`PannerNode` が定位した複数の音源が混ざり合い、**どの方向から何が近づいているのかを
+聞き分けられなくなる**。鳴っている声が常に 1 つであることが、
+「音で方向を探して振り向く」という本作の中心的な行為を成立させる唯一の条件である。
+
+同時出現をやめた代償として、「一体を処理する間に他が詰めてくる」という
+圧力は失われる。これは**ウェーブごとの接近速度の上昇**（[4.4](#44-チューニング値gameconfig)）と、
+**次の個体が視線から離れた位置に出る**制約（[4.7](#47-ゴーストの出現)）で置き換える。
+
 制限時間は設けない。経過時間はスコアとして記録し、クリア時のみ `localStorage` に最短記録を保存する。
 
 ### コアメカニクス
@@ -157,8 +171,8 @@ export interface GameConfig {
   /** スポーン距離の範囲 */
   readonly spawnDistanceMin: Meters;
   readonly spawnDistanceMax: Meters;
-  /** 個体間の最小方位差。固まって出現するのを防ぐ */
-  readonly minSeparationAzimuth: Radians;
+  /** 出現時、現在の視線方向から最低これだけ離す */
+  readonly spawnMinAngleFromView: Radians;
   /** 高さオフセットの範囲 */
   readonly heightOffsetMin: Meters;
   readonly heightOffsetMax: Meters;
@@ -176,8 +190,8 @@ export interface GameConfig {
   readonly approachSpeed: number;          // m/s
   /** 照射 OFF 中に掛かる速度倍率 */
   readonly lightOffSpeedMultiplier: number;
-  /** 残存数に応じた速度倍率。index = 残り体数 - 1 */
-  readonly speedByRemaining: readonly number[];
+  /** 何体目かに応じた速度倍率。index = 0 起点のウェーブ番号 */
+  readonly speedByWave: readonly number[];
 
   // ── 方位の揺らぎ ──────────────────────────
   /** 初期方位からの最大振れ幅 */
@@ -192,6 +206,8 @@ export interface GameConfig {
   readonly purifyDecayPerSec: number;
   /** 消滅演出の長さ */
   readonly banishAnimationMs: number;
+  /** 浄化してから次の個体が現れるまでの間 */
+  readonly nextSpawnDelayMs: number;
 
   // ── 掴みかかりと振り払い ──────────────────
   /** この距離まで詰められると GRABBING に入る */
@@ -224,7 +240,7 @@ export const DEFAULT_CONFIG: GameConfig = {
 
   approachSpeed: 0.22,
   lightOffSpeedMultiplier: 1.6,
-  speedByRemaining: [1.7, 1.35, 1.0],
+  speedByWave: [1.0, 1.3, 1.6],
 
   wobbleAmplitude: deg(30),
   wobbleFrequencyHz: 0.08,
@@ -232,6 +248,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   purifyDurationSec: 3.5,
   purifyDecayPerSec: 0.15,
   banishAnimationMs: 1200,
+  nextSpawnDelayMs: 1600,
 
   grabDistance: 0.8 as Meters,
   grabGraceMs: 1500,
@@ -249,9 +266,10 @@ export const DEFAULT_CONFIG: GameConfig = {
 | --- | --- |
 | `beamHalfAngle = 8°` | **縦持ちの水平半視野（約 15°）より明確に狭くする。**カメラ FOV 60° は垂直値であり、水平はその半分以下しかない（[03.5](./03-domain-model.md#光錐の角度と描画-fov-の関係)） |
 | `visibleHalfAngle = 14°` | 水平半視野にほぼ一致。「画面の隅にぼんやり見える」が成立する上限 |
-| `minSeparationAzimuth = 100°` | 3 体が 360° に散るため、2 体を同時に光錐へ収めることが原理的に不可能になる |
+| `spawnMinAngleFromView = 90°` | 次の個体が必ず視界の外に出る。振り向いて探す行為が毎回発生する |
+| `nextSpawnDelayMs = 1600` | 浄化後の無音の間。次の声が鳴り始めた方向が際立つ |
 | `approachSpeed = 0.22 m/s` | 最遠 10m から `grabDistance` まで約 42 秒。1 体の浄化に 3.5 秒かかることを踏まえた猶予 |
-| `speedByRemaining` | 残り 1 体で 1.7 倍。終盤に緊張が集中し、作業感を防ぐ |
+| `speedByWave` | 3 体目で 1.6 倍。逐次出現では常に残り 1 体なので、残存数ではなく進行度で難易度を上げる |
 | `purifyDurationSec = 3.5` | 「一体を処理する間に他がどれだけ詰めるか」が体感できる長さ。0.22 × 3.5 ≒ 0.77m |
 | `purifyDecayPerSec = 0.15` | 完全リセットしない。3.5 秒かけた蓄積が消えるのに約 6.7 秒かかり、一瞬の視線移動を許容する |
 | `maxEscapes = 2` | 1 体につき 2 回まで救済。3 回目の掴みかかりは猶予なしで即敗北 |
@@ -279,6 +297,8 @@ export interface StepInput {
   readonly dt: number;
   /** セッション開始からの経過ミリ秒 */
   readonly elapsedMs: Millis;
+  /** 0 起点のウェーブ番号。速度倍率の決定に使う */
+  readonly waveIndex: number;
   readonly config: GameConfig;
 }
 
@@ -333,14 +353,24 @@ export function step(input: StepInput): StepOutput;
 
 ```typescript
 function approachSpeedOf(input: StepInput): number {
-  const remaining = input.ghosts.filter((g) => g.phase !== 'BANISHED').length;
-  const idx = Math.min(remaining, input.config.speedByRemaining.length) - 1;
-  const byRemaining = input.config.speedByRemaining[Math.max(0, idx)];
-  const byLight =
-    input.light === 'OFF' ? input.config.lightOffSpeedMultiplier : 1;
-  return input.config.approachSpeed * byRemaining * byLight;
+  const table = input.config.speedByWave;
+
+  let byWave = 1;
+  if (table.length > 0) {
+    // 非有限値が来ても黙って 1 倍にならないようにする。添字が NaN になると
+    // table[NaN] が undefined となり、難易度が上がらないまま気づけない
+    const wave = Number.isFinite(input.waveIndex) ? input.waveIndex : 0;
+    const idx = Math.min(Math.max(Math.floor(wave), 0), table.length - 1);
+    byWave = table[idx] ?? 1;
+  }
+
+  const byLight = input.light === 'OFF' ? input.config.lightOffSpeedMultiplier : 1;
+  return input.config.approachSpeed * byWave * byLight;
 }
 ```
+
+逐次出現では生存数が常に 1 なので、**残存数を基準にすると倍率が一定に張り付き、
+難易度カーブが作れない**。進行度（何体目か）を基準にする。
 
 ### 方位の揺らぎ
 
@@ -393,16 +423,30 @@ export function reduce(input: ReduceInput): {
 ### 勝敗の確定
 
 ```text
-PLAYER_CAUGHT がイベント列に含まれる
-  → outcome = FAILED を確定し、resultAt = nowMs + resultDelayMs を設定
+浄化イベントがあり、まだ出し切っていない
+  → nextSpawnAt = elapsedMs + nextSpawnDelayMs を予約
 
-全ゴーストが BANISHED
-  → outcome = CLEARED を確定し、resultAt = nowMs + resultDelayMs を設定
+nextSpawnAt に達した
+  → spawnOne() で次の 1 体を生成し、ghosts を差し替える
+  → spawnedCount++、GHOST_APPEARED を発火
+
+PLAYER_CAUGHT がイベント列に含まれる
+  → outcome = FAILED を確定し、resultAt = elapsedMs + resultDelayMs を設定
+  → 補充は行わない
+
+全部出し切った かつ 生存ゼロ かつ 補充待ちでない
+  → outcome = CLEARED を確定し、resultAt = elapsedMs + resultDelayMs を設定
   → SESSION_CLEARED を発火（記録更新の判定は application が StoragePort 経由で行う）
 
-nowMs >= resultAt
+elapsedMs >= resultAt
   → phase を RESULT へ遷移
 ```
+
+クリア条件に「補充待ちでない」を含めている点が重要である。
+これがないと、1 体目を浄化して一瞬生存ゼロになった時点でクリアと誤判定する。
+
+`reduce()` は出現処理を担うため `viewYaw` と `random` を引数で受け取る。
+乱数を注入することで純粋性を保ち、テスト可能なままにしている。
 
 勝敗が確定してから結果画面に移るまでに `resultDelayMs` の間を置く。
 この間、演出（掴みかかりのアップ、あるいは最後の浄化の光）が表示される。
@@ -421,97 +465,81 @@ const dt = Math.min(MAX_DT, (now - lastFrameTime) / 1000);
 
 ---
 
-## 4.7 ゴーストの初期配置
+## 4.7 ゴーストの出現
+
+同時に存在するのは常に 1 体であり、浄化されるたびに次の 1 体を生成する
+（[4.1](#同時に存在するのは-1-体だけ)）。
 
 ```typescript
 // domain/ghost/GhostSpawner.ts
 
 /**
- * ゴーストを配置する。乱数は引数で受け取るため純粋関数である。
- * @param random 0 以上 1 未満を返す関数
+ * ゴーストを 1 体生成する。乱数は引数で受け取るため純粋関数である。
+ *
+ * @param index 0 起点の通し番号。ID と速度倍率の決定に使う
+ * @param viewYaw 生成時点でプレイヤーが向いているワールド方位
  */
-export function spawn(config: GameConfig, random: () => number): readonly Ghost[] {
-  const gaps = pickGaps(config.ghostCount, config.minSeparationAzimuth, random);
+export function spawnOne(
+  config: GameConfig,
+  index: number,
+  viewYaw: Radians,
+  random: () => number,
+): Ghost {
+  const azimuth = pickSpawnAzimuth(viewYaw, config.spawnMinAngleFromView, random);
 
-  // 隙間を積み上げて方位を決め、最も広い隙間の中心を正面へ回す
-  const raw: number[] = [];
-  let cursor = 0;
-  for (let i = 0; i < config.ghostCount; i++) {
-    raw.push(cursor);
-    cursor += gaps[i];
-  }
-  const rotation = frontClearingRotation(raw, gaps);
-
-  return raw.map((azimuthRaw, i) => {
-    const azimuth = normalizeAngle(azimuthRaw + rotation) as Radians;
-    return {
-      id: ghostId(`ghost-${i}`),
-      azimuth,
-      baseAzimuth: azimuth,
-      distance: lerp(config.spawnDistanceMin, config.spawnDistanceMax, random()) as Meters,
-      heightOffset: lerp(config.heightOffsetMin, config.heightOffsetMax, random()) as Meters,
-      phase: 'APPROACHING',
-      purify: 0,
-      grabStartedAt: null,
-      escapeCount: 0,
-      wobbleSeed: random() * Math.PI * 2,
-      banishedAt: null,
-    } satisfies Ghost;
-  });
+  return {
+    id: ghostId(`ghost-${index}`),
+    azimuth,
+    baseAzimuth: azimuth,
+    distance: lerp(config.spawnDistanceMin, config.spawnDistanceMax, random()) as Meters,
+    heightOffset: lerp(config.heightOffsetMin, config.heightOffsetMax, random()) as Meters,
+    phase: 'APPROACHING',
+    purify: 0,
+    grabStartedAt: null,
+    escapeCount: 0,
+    wobbleSeed: random() * Math.PI * 2,
+    banishedAt: null,
+  };
 }
 ```
 
-### 分離制約
+### 視線から離れた方位に出す
 
-`minSeparationAzimuth`（既定 100°）以上離れた方位を選ぶ。
-3 体 × 100° = 300° であり、360° の円周に収まるため解は必ず存在する。
+出現位置の制約は「個体どうしを離すこと」ではなく、
+**プレイヤーが今向いている方向を避けること**である。
 
-ただし**棄却サンプリングは使わない**。分離角が大きいと実行可能領域が極端に狭くなり、
-先に置いた 2 体の位置次第で 3 体目の候補がほとんど残らないため、
-試行が頻繁に失敗してフォールバックへ落ちる。
-
-代わりに**隙間（gap）そのものを構成する**。円周を個体数と同じ数の隙間に分け、
-各隙間に最低 `minSeparationAzimuth` を割り当て、残りを乱数で配分する。
-この方法なら制約は定義上必ず満たされ、失敗する経路が存在しない。
+逐次出現では、次がどこに出たかを音で探して振り向くことがゲームの中心になる。
+見ている方向に出てしまうと、その探索が丸ごと消える。
 
 ```typescript
-function pickGaps(count: number, minSeparation: number, random: () => number): number[] {
-  // 要求された分離角が円周に収まらない場合は等分まで緩める
-  const base = Math.min(minSeparation, TAU / count);
-  const slack = TAU - base * count;
-
-  const weights = Array.from({ length: count }, () => random());
-  const total = weights.reduce((a, b) => a + b, 0);
-  if (total <= 0) return new Array<number>(count).fill(TAU / count);
-
-  return weights.map((w) => base + (w / total) * slack);
+export function pickSpawnAzimuth(
+  viewYaw: Radians,
+  minAngleFromView: Radians,
+  random: () => number,
+): Radians {
+  // 禁止扇の半角。円周を食い尽くさないよう上限を設ける
+  const forbidden = Math.min(Math.abs(minAngleFromView), Math.PI * 0.9);
+  // 許される弧の長さ（視線の裏側を中心とする弧）
+  const allowed = Math.PI * 2 - forbidden * 2;
+  // 視線の反対側を起点に、許容弧の中から一様に選ぶ
+  const offset = forbidden + random() * allowed;
+  return normalizeAngle(viewYaw + offset) as Radians;
 }
 ```
 
-隣り合う個体の距離は各隙間そのものであり、隣り合わない個体の距離は
-隙間の和になる。どちらも `base` 以上であるため、全ペアで制約が成立する。
+視線を中心とする「出現禁止の扇」の外側の弧から一様に選ぶ。
+棄却サンプリングを使わないため必ず 1 回で決まり、失敗する経路が存在しない。
 
-### 最初の 1 体を正面から外す
+既定の `spawnMinAngleFromView = 90°` では、出現位置は視線から最低 90°、
+つまり**必ず視界の外**になる。実測では 129°・153°・147° といった値が得られており、
+毎回ほぼ振り返る動作が要求される。
 
-キャリブレーション直後、プレイヤーは正面を向いている。
-そこにゴーストがいると、開始と同時に捕捉が始まってしまい、探索の体験が失われる。
+### 1 体目の出し方
 
-そこで**最も広い隙間の中心が正面（方位 0）に来るよう、配置全体を回転させる**。
-
-得られる正面クリアランスは「最大の隙間の半分」である。
-隙間の総和は 360° なので最大の隙間は必ず `360°/n` 以上あり、
-既定の 3 体なら **60° 以上**が保証される。
-
-> `spawnFrontClearance` は**独立した調整値ではなく、この幾何から導かれる下限**である。
-> 値を変えても配置アルゴリズムは変わらない。テストが満たすべき期待値として保持している。
-> ゴースト数を増やすとこの下限は小さくなる（5 体なら 36°）。
-
-なお方位には揺らぎ（[4.5](#方位の揺らぎ)）が加わるため、
-開始直後にゴーストが正面へ寄ってくることはある。
-ただし揺らぎの振幅は 30° であり、`beamHalfAngle`（8°）より十分大きいため、
-放置していて勝手に捕捉されることはない。
-
----
+キャリブレーション直後のワールド方位は定義上 0 である
+（[03.4](./03-domain-model.md#34-キャリブレーション)）。
+そのため 1 体目も `viewYaw = 0` を与えて同じ関数で生成すればよく、
+開始と同時に正面で捕捉が始まることはない。
 
 ## 4.8 未解決事項とバランス調整の指針
 
