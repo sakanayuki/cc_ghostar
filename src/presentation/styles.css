@@ -1,0 +1,343 @@
+/*
+ * 配色は暗所を前提とする。純白の大面積は使わない。
+ * 暗順応した目には眩しすぎるため（設計書 06.8）。
+ */
+:root {
+  --fg: #dde8f0;
+  --fg-dim: rgba(221, 232, 240, 0.55);
+  --danger: #c8412f;
+  --accent: #7fd4ff;
+  --panel: rgba(8, 12, 18, 0.82);
+  --tap-min: 48px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #05070a;
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  overscroll-behavior: none;
+  user-select: none;
+}
+
+#camera {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  background: #05070a;
+}
+
+body.mock-camera #camera {
+  background: #0a0a0c;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.layer--overlay {
+  z-index: 4;
+}
+
+.hud-text {
+  color: var(--fg);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* ── 全画面パネル（タイトル・結果・エラー） ─────────── */
+.panel {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  padding: 2rem 1.5rem;
+  background: linear-gradient(180deg, rgba(5, 7, 10, 0.96), rgba(5, 7, 10, 0.88));
+  text-align: center;
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: clamp(1.5rem, 7vw, 2.25rem);
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.panel__lead {
+  margin: 0;
+  max-width: 28rem;
+  line-height: 1.7;
+  color: var(--fg-dim);
+  font-size: 0.95rem;
+}
+
+.panel__notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 28rem;
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  line-height: 1.9;
+  text-align: left;
+}
+
+.panel__notes li::before {
+  content: '・';
+}
+
+.panel__record {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
+/* ── ボタン ──────────────────────────────────── */
+.btn {
+  pointer-events: auto;
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+  padding: 0.85rem 1.75rem;
+  border: 1px solid rgba(221, 232, 240, 0.35);
+  border-radius: 999px;
+  background: rgba(12, 18, 26, 0.75);
+  color: var(--fg);
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn:active {
+  background: rgba(40, 56, 72, 0.9);
+}
+
+.btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn--icon {
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+}
+
+.btn--on {
+  border-color: var(--accent);
+  background: rgba(40, 80, 104, 0.85);
+}
+
+/* ── HUD ─────────────────────────────────────── */
+.hud__top {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud__bottom {
+  position: absolute;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0 1rem;
+}
+
+/* 照準。光錐（判定）が視野（描画）より狭いことを伝える唯一の手段 */
+.reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(221, 232, 240, 0.3);
+  border-radius: 50%;
+  transition:
+    border-color 0.12s ease,
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.reticle--held {
+  border-color: var(--accent);
+  border-width: 2px;
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.reticle--off {
+  border-style: dashed;
+  opacity: 0.45;
+}
+
+.gauge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(48vw, 220px);
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(221, 232, 240, 0.16);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.gauge--visible {
+  opacity: 1;
+}
+
+.gauge__fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: background-color 0.2s ease;
+}
+
+.gauge--decaying .gauge__fill {
+  background: #b98b3c;
+}
+
+/* 接近警告。脈動は 0.83Hz。3Hz を超える明滅は禁止（設計書 06.6） */
+.warn {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(
+    ellipse at var(--warn-x, 50%) var(--warn-y, 50%),
+    rgba(200, 65, 47, 0.42),
+    transparent 55%
+  );
+}
+
+.warn--near {
+  animation: warn-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes warn-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+/* 接触演出。0.35 秒かけて暗転する。全白フラッシュは使わない */
+.blackout {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.blackout--on {
+  opacity: 1;
+}
+
+/* ── 横持ちの案内 ─────────────────────────────── */
+#rotate-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: rgba(5, 7, 10, 0.94);
+  font-size: 1.05rem;
+}
+
+@media (orientation: landscape) {
+  body.immersive #rotate-overlay {
+    display: flex;
+  }
+}
+
+/* ── デバッグ HUD ─────────────────────────────── */
+#debug {
+  position: fixed;
+  top: max(0.5rem, env(safe-area-inset-top));
+  left: 0.5rem;
+  z-index: 6;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: var(--panel);
+  color: #9fe8b0;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre;
+  pointer-events: none;
+}
+
+#debug[hidden] {
+  display: none;
+}
+
+/* ── モーション軽減（設計書 06.6） ───────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .warn--near {
+    animation: none;
+    opacity: 0.55;
+  }
+  .reticle,
+  .gauge,
+  .gauge__fill,
+  .blackout {
+    transition: none;
+  }
+}

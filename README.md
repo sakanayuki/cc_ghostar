@@ -5,7 +5,7 @@ Android Chrome 上で動作する、インストール不要の WebAR ホラー�
 スマートフォンを「現実には見えない存在を映し出す特殊な懐中電灯」として使い、
 背面カメラと背面 LED で暗い部屋を照らしながら、周囲に潜む幽霊を探して浄化する。
 
-**現在のステータス: 設計フェーズ（実装未着手）**
+**現在のステータス: PoC 実装済み（実機での検証待ち）**
 
 ---
 
@@ -29,7 +29,7 @@ Android Chrome 上で動作する、インストール不要の WebAR ホラー�
 
 ---
 
-## 技術スタック（予定）
+## 技術スタック
 
 ```text
 TypeScript / Vite / Three.js
@@ -74,15 +74,46 @@ https://sakanayuki.github.io/cc_ghostar/
 
 ---
 
-## 開発（実装着手後）
+## 開発
 
 ```bash
 npm ci
 npm run dev        # 開発サーバー
+npm run test       # ドメイン層のユニットテスト
 npm run verify     # 型チェック + Lint + テスト + ビルド
 ```
 
-実機での確認手順は [07.3](./docs/07-build-deploy.md#開発サーバーと-https) を参照。
+### PC での動作確認
+
+実機がなくてもゲームロジックの大半を確認できる。
+
+```text
+http://localhost:5173/cc_ghostar/?mock=1&debug=1
+```
+
+| 操作 | 効果 |
+| --- | --- |
+| マウスドラッグ | 視点を回す |
+| 矢印キー ←→ | 方位を 5 度ずつ変える |
+| 矢印キー ↑↓ | 仰俯角を変える |
+| Space | シェイク（振り払い） |
+
+### 実機での確認
+
+`http://192.168.x.x:5173` は非セキュアコンテキストになるため、
+カメラもセンサーも動作しない。次のいずれかを使う。
+
+1. `main` に push して Pages で確認する（確実）
+2. Android Chrome の `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+   に開発サーバーの URL を登録する（ホットリロードが使えて速い）
+
+詳細は [07.3](./docs/07-build-deploy.md#開発サーバーと-https) を参照。
+
+### 3D モデルの差し替え
+
+`public/models/ghost.glb` を置くと自動的に GLB 表示へ切り替わる。
+ファイルがなければ手続き生成のプレースホルダが使われる。
+モデルの規約は [05.6](./docs/05-infrastructure.md#glb-の規約) を参照。
 
 ---
 

@@ -67,18 +67,20 @@ const url = '/models/ghost.glb';
     "verify": "npm run typecheck && npm run lint && npm run test && vite build"
   },
   "dependencies": {
-    "three": "0.180.0"
+    "three": "0.186.0"
   },
   "devDependencies": {
-    "@types/three": "0.180.0",
-    "typescript": "5.9.2",
-    "typescript-eslint": "8.44.0",
-    "eslint": "9.36.0",
-    "@eslint/js": "9.36.0",
-    "prettier": "3.6.2",
+    "@eslint/js": "10.0.1",
+    "@types/three": "0.186.0",
+    "@vitest/coverage-v8": "5.0.1",
+    "eslint": "10.11.0",
     "eslint-config-prettier": "10.1.8",
-    "vite": "7.1.5",
-    "vitest": "3.2.4"
+    "globals": "16.5.0",
+    "prettier": "3.9.8",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
   }
 }
 ```
@@ -94,9 +96,20 @@ const url = '/models/ghost.glb';
 
 依存の更新は意図的に行い、更新時は必ず実機で描画を確認すること。
 
-> 上記のバージョンは本設計書の執筆時点のものである。
-> 実装着手時に `npm view <pkg> version` で最新安定版を確認し、
-> **そのとき固定した値を package.json に書き込む**こと。
+### TypeScript のバージョン上限
+
+**TypeScript は最新版を使えない。** `typescript-eslint@8.70.0` の peer 依存が
+`typescript: ">=4.8.4 <6.1.0"` であり、TypeScript 7 系を入れると型付き lint が
+動作しなくなる。実装時点の最新は 7.0.2 だったが、5.9.3 に固定した。
+
+依存を更新する際は、この制約を最初に確認すること。
+
+```bash
+npm view typescript-eslint peerDependencies
+```
+
+> 上記のバージョンは実装時点で固定したものである。更新は意図的に行い、
+> 更新時は必ず `npm run verify` と実機での描画を確認すること。
 > 重要なのは特定のバージョン番号ではなく、固定されていることである。
 
 ---

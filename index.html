@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#05070a" />
+    <meta
+      name="description"
+      content="スマートフォンを特殊な懐中電灯として使う WebAR ホラー体験"
+    />
+    <title>Torch WebAR Horror</title>
+  </head>
+  <body>
+    <video id="camera" playsinline autoplay muted></video>
+    <canvas id="scene"></canvas>
+    <div id="ui"></div>
+    <div id="rotate-overlay">
+      <div style="font-size: 2rem">⟲</div>
+      <div>端末を縦向きにしてください</div>
+    </div>
+    <pre id="debug" hidden></pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

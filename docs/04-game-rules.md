@@ -218,8 +218,8 @@ export const DEFAULT_CONFIG: GameConfig = {
   heightOffsetMin: -0.25 as Meters,
   heightOffsetMax: 0.15 as Meters,
 
-  beamHalfAngle: deg(20),
-  visibleHalfAngle: deg(35),
+  beamHalfAngle: deg(8),
+  visibleHalfAngle: deg(14),
   visibleMaxDistance: 12 as Meters,
 
   approachSpeed: 0.22,
@@ -247,8 +247,8 @@ export const DEFAULT_CONFIG: GameConfig = {
 
 | 値 | 根拠 |
 | --- | --- |
-| `beamHalfAngle = 20°` | カメラ FOV 60° より明確に狭くし、狙いを定める行為を成立させる（[03.5](./03-domain-model.md#光錐の角度と描画-fov-の関係)） |
-| `visibleHalfAngle = 35°` | 光錐の外側に「ぼんやり見える」帯を作り、存在に気づかせる |
+| `beamHalfAngle = 8°` | **縦持ちの水平半視野（約 15°）より明確に狭くする。**カメラ FOV 60° は垂直値であり、水平はその半分以下しかない（[03.5](./03-domain-model.md#光錐の角度と描画-fov-の関係)） |
+| `visibleHalfAngle = 14°` | 水平半視野にほぼ一致。「画面の隅にぼんやり見える」が成立する上限 |
 | `minSeparationAzimuth = 100°` | 3 体が 360° に散るため、2 体を同時に光錐へ収めることが原理的に不可能になる |
 | `approachSpeed = 0.22 m/s` | 最遠 10m から `grabDistance` まで約 42 秒。1 体の浄化に 3.5 秒かかることを踏まえた猶予 |
 | `speedByRemaining` | 残り 1 体で 1.7 倍。終盤に緊張が集中し、作業感を防ぐ |
@@ -431,17 +431,23 @@ const dt = Math.min(MAX_DT, (now - lastFrameTime) / 1000);
  * @param random 0 以上 1 未満を返す関数
  */
 export function spawn(config: GameConfig, random: () => number): readonly Ghost[] {
-  const ghosts: Ghost[] = [];
-  const azimuths: number[] = [];
+  const gaps = pickGaps(config.ghostCount, config.minSeparationAzimuth, random);
 
+  // 隙間を積み上げて方位を決め、最も広い隙間の中心を正面へ回す
+  const raw: number[] = [];
+  let cursor = 0;
   for (let i = 0; i < config.ghostCount; i++) {
-    const azimuth = pickSeparatedAzimuth(azimuths, config, random);
-    azimuths.push(azimuth);
+    raw.push(cursor);
+    cursor += gaps[i];
+  }
+  const rotation = frontClearingRotation(raw, gaps);
 
-    ghosts.push({
+  return raw.map((azimuthRaw, i) => {
+    const azimuth = normalizeAngle(azimuthRaw + rotation) as Radians;
+    return {
       id: ghostId(`ghost-${i}`),
-      azimuth: azimuth as Radians,
-      baseAzimuth: azimuth as Radians,
+      azimuth,
+      baseAzimuth: azimuth,
       distance: lerp(config.spawnDistanceMin, config.spawnDistanceMax, random()) as Meters,
       heightOffset: lerp(config.heightOffsetMin, config.heightOffsetMax, random()) as Meters,
       phase: 'APPROACHING',
@@ -449,9 +455,9 @@ export function spawn(config: GameConfig, random: () => number): readonly Ghost[
       grabStartedAt: null,
       escapeCount: 0,
       wobbleSeed: random() * Math.PI * 2,
-    });
-  }
-  return ghosts;
+      banishedAt: null,
+    } satisfies Ghost;
+  });
 }
 ```
 
@@ -460,36 +466,50 @@ export function spawn(config: GameConfig, random: () => number): readonly Ghost[
 `minSeparationAzimuth`（既定 100°）以上離れた方位を選ぶ。
 3 体 × 100° = 300° であり、360° の円周に収まるため解は必ず存在する。
 
-ただし棄却サンプリングが理論上無限ループしうるため、**試行回数に上限を設け、
-上限に達した場合は等間隔配置（120° 刻み）にランダムな全体回転を加えたものへフォールバックする**。
+ただし**棄却サンプリングは使わない**。分離角が大きいと実行可能領域が極端に狭くなり、
+先に置いた 2 体の位置次第で 3 体目の候補がほとんど残らないため、
+試行が頻繁に失敗してフォールバックへ落ちる。
+
+代わりに**隙間（gap）そのものを構成する**。円周を個体数と同じ数の隙間に分け、
+各隙間に最低 `minSeparationAzimuth` を割り当て、残りを乱数で配分する。
+この方法なら制約は定義上必ず満たされ、失敗する経路が存在しない。
 
 ```typescript
-function pickSeparatedAzimuth(
-  existing: readonly number[],
-  config: GameConfig,
-  random: () => number,
-): number {
-  const MAX_ATTEMPTS = 64;
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const a = normalizeAngle(random() * Math.PI * 2);
-    const ok = existing.every(
-      (b) => Math.abs(angleDelta(b, a)) >= config.minSeparationAzimuth,
-    );
-    if (ok) return a;
-  }
-  // フォールバック：等間隔配置
-  const step = (Math.PI * 2) / config.ghostCount;
-  return normalizeAngle(existing.length * step + random() * step * 0.1);
+function pickGaps(count: number, minSeparation: number, random: () => number): number[] {
+  // 要求された分離角が円周に収まらない場合は等分まで緩める
+  const base = Math.min(minSeparation, TAU / count);
+  const slack = TAU - base * count;
+
+  const weights = Array.from({ length: count }, () => random());
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 0) return new Array<number>(count).fill(TAU / count);
+
+  return weights.map((w) => base + (w / total) * slack);
 }
 ```
+
+隣り合う個体の距離は各隙間そのものであり、隣り合わない個体の距離は
+隙間の和になる。どちらも `base` 以上であるため、全ペアで制約が成立する。
 
 ### 最初の 1 体を正面から外す
 
 キャリブレーション直後、プレイヤーは正面を向いている。
 そこにゴーストがいると、開始と同時に捕捉が始まってしまい、探索の体験が失われる。
 
-そこで**全体にランダムな回転を加え、かつ最も近い個体が正面から 60° 以上離れる**ように配置する。
-上記の分離制約（100°）を満たす配置であれば、全体回転を適切に選ぶことでこの条件は常に満たせる。
+そこで**最も広い隙間の中心が正面（方位 0）に来るよう、配置全体を回転させる**。
+
+得られる正面クリアランスは「最大の隙間の半分」である。
+隙間の総和は 360° なので最大の隙間は必ず `360°/n` 以上あり、
+既定の 3 体なら **60° 以上**が保証される。
+
+> `spawnFrontClearance` は**独立した調整値ではなく、この幾何から導かれる下限**である。
+> 値を変えても配置アルゴリズムは変わらない。テストが満たすべき期待値として保持している。
+> ゴースト数を増やすとこの下限は小さくなる（5 体なら 36°）。
+
+なお方位には揺らぎ（[4.5](#方位の揺らぎ)）が加わるため、
+開始直後にゴーストが正面へ寄ってくることはある。
+ただし揺らぎの振幅は 30° であり、`beamHalfAngle`（8°）より十分大きいため、
+放置していて勝手に捕捉されることはない。
 
 ---
 
