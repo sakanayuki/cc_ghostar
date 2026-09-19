@@ -2,12 +2,21 @@ import type { AudioPort, OneShotSound } from '@/application/ports';
 import type { GhostId, Vector3Like } from '@/shared/types';
 import { ONE_SHOT_SPECS, createVoice, playOneShot } from './ProceduralVoice';
 import type { Voice } from './ProceduralVoice';
+import { loadVoiceBuffer } from './VoiceSample';
 
 interface GhostNode {
+  /** 手続き生成の常時鳴るノイズ。方向を継続的に掴むための床 */
   readonly voice: Voice;
+  /** 同梱音声の定期再生。無い場合は null */
+  readonly sample: AudioBufferSourceNode | null;
   readonly panner: PannerNode;
   readonly gain: GainNode;
 }
+
+/** 同梱音声があるとき、手続き生成のノイズをどこまで下げるか */
+const BED_GAIN_WITH_SAMPLE = 0.3;
+/** 個体ごとの再生レート。声色を変えて「次が出た」と気づけるようにする */
+const SAMPLE_RATES = [1.0, 0.92, 1.08] as const;
 
 const EYE_HEIGHT = 1.6;
 
@@ -19,6 +28,8 @@ export class WebAudioAdapter implements AudioPort {
   private muted: boolean;
   private seedCounter = 0;
   private failed = false;
+  private voiceBuffer: AudioBuffer | null = null;
+  private attachCounter = 0;
 
   constructor(initiallyMuted = false) {
     this.muted = initiallyMuted;
@@ -54,6 +65,12 @@ export class WebAudioAdapter implements AudioPort {
       listener.positionZ.value = 0;
 
       if (this.ctx.state === 'suspended') await this.ctx.resume();
+
+      // 同梱音声を読み込む。無ければ手続き生成のみで動作する
+      this.voiceBuffer ??= await loadVoiceBuffer(
+        this.ctx,
+        `${import.meta.env.BASE_URL}audio/ghost-voice.mp3`,
+      );
     } catch {
       // 初期化失敗は非致命。無音で続行する（設計書 02.7）
       this.failed = true;
@@ -91,9 +108,27 @@ export class WebAudioAdapter implements AudioPort {
     gain.gain.value = 0;
 
     const voice = createVoice(ctx, this.seedCounter++ % 7);
-    voice.output.connect(panner).connect(gain).connect(master);
+    const bed = ctx.createGain();
+    bed.gain.value = this.voiceBuffer === null ? 1 : BED_GAIN_WITH_SAMPLE;
+    voice.output.connect(bed).connect(panner);
 
-    this.nodes.set(id, { voice, panner, gain });
+    // クリップ＋無音を 1 本のバッファにしてループさせる。
+    // 「鳴る → 間 → また鳴る」がタイマーなしのサンプル精度で実現できる
+    let sample: AudioBufferSourceNode | null = null;
+    if (this.voiceBuffer !== null) {
+      sample = ctx.createBufferSource();
+      sample.buffer = this.voiceBuffer;
+      sample.loop = true;
+      sample.playbackRate.value =
+        SAMPLE_RATES[this.attachCounter % SAMPLE_RATES.length] ?? 1;
+      sample.connect(panner);
+      sample.start();
+    }
+    this.attachCounter += 1;
+
+    panner.connect(gain).connect(master);
+
+    this.nodes.set(id, { voice, sample, panner, gain });
   }
 
   updateGhost(id: GhostId, position: Vector3Like, intensity: number): void {
@@ -111,6 +146,14 @@ export class WebAudioAdapter implements AudioPort {
     const node = this.nodes.get(id);
     if (node === undefined) return;
     node.voice.stop();
+    if (node.sample !== null) {
+      try {
+        node.sample.stop();
+      } catch {
+        // 二重停止は無視する
+      }
+      node.sample.disconnect();
+    }
     node.panner.disconnect();
     node.gain.disconnect();
     this.nodes.delete(id);
@@ -137,7 +180,8 @@ export class WebAudioAdapter implements AudioPort {
   describe(): string {
     if (this.failed) return 'failed';
     if (this.ctx === null) return 'locked';
-    return `${this.ctx.state} ${this.ctx.sampleRate}Hz`;
+    const source = this.voiceBuffer === null ? 'procedural' : 'sample+bed';
+    return `${this.ctx.state} ${this.ctx.sampleRate}Hz ${source}`;
   }
 }
 

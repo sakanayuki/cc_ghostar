@@ -533,6 +533,8 @@ export function beamAxis(q: Quaternion, out = _tmpVec): Vector3 {
 | `.gitignore` | `node_modules/`、`dist/`、`.DS_Store` |
 | `.prettierrc` | 既定設定 + `singleQuote: true` |
 | `public/.nojekyll` | 空ファイル |
+| `public/audio/ghost-voice.mp3` | ゴーストの声。差し替え可（[05.5](./05-infrastructure.md#素材の差し替え)） |
+| `public/models/ghost.glb` | 任意。置けば GLB 表示へ切り替わる |
 | `docs/` | 本設計書 |
 
 ---

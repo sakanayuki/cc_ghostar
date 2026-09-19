@@ -111,6 +111,10 @@ export default tseslint.config(
   },
 
   // ── プライバシー方針の強制（設計書 01.5）──
+  //
+  // 禁じたいのは「外部への送信」であって、同梱アセットの読み込みではない。
+  // 同一オリジンのアセットを読む箇所だけは個別に eslint-disable で解除し、
+  // 解除にはその旨のコメントを必須とする。
   {
     files: ['src/**/*.ts'],
     rules: {
@@ -119,7 +123,8 @@ export default tseslint.config(
         {
           name: 'fetch',
           message:
-            '外部送信は行いません（設計書 01.5）。アセットは Vite の import か GLTFLoader を使ってください。',
+            '外部送信は行いません（設計書 01.5）。同梱アセットの読み込みに限り、' +
+            '理由をコメントした上で eslint-disable-next-line で解除してください。',
         },
         { name: 'XMLHttpRequest', message: '外部送信は行いません（設計書 01.5）。' },
       ],
