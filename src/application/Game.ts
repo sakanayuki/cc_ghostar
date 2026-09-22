@@ -17,6 +17,8 @@ import {
   transition,
 } from '@/domain/session/GameState';
 import type { GamePhase, SessionState } from '@/domain/session/GameState';
+import type { SnapshotGhost, SnapshotMessage } from '@/domain/multiplayer/NetMessages';
+import { approachSpeedOf } from '@/domain/ghost/GhostBehavior';
 import { millis, radians } from '@/shared/types';
 import type { Millis } from '@/shared/types';
 import { CalibrationService } from './CalibrationService';
@@ -91,6 +93,8 @@ export class Game {
   private nearest: { azimuth: number; distance: number } | null = null;
   private lastImmersiveOk = false;
   private sessionFinalized = false;
+  private lastYaw = 0;
+  private lastSpeed = 0;
 
   constructor(private readonly deps: GameDeps) {
     this.loop = new GameLoop(deps.clock, this.frame);
@@ -125,6 +129,31 @@ export class Game {
 
   get totalGhosts(): number {
     return this.deps.config.ghostCount;
+  }
+
+  /**
+   * 妨害側へ配るための現在の状態（設計書 10.5）。
+   *
+   * カメラ映像は一切含まない。送るのは向きとゴーストの位置だけである
+   * （設計書 01.5 のプライバシー方針）。
+   */
+  snapshotData(): Omit<SnapshotMessage, 'type' | 'tick'> {
+    const ghosts: SnapshotGhost[] = this.state.ghosts.map((g) => ({
+      id: g.id,
+      azimuth: g.azimuth,
+      distance: g.distance,
+      phase: g.phase,
+      purify: g.purify,
+    }));
+
+    return {
+      yaw: this.lastYaw,
+      light: this.state.light === 'ON',
+      ghosts,
+      elapsedMs: this.state.elapsedMs,
+      remaining: Math.max(0, this.deps.config.ghostCount - this.state.purifiedCount),
+      speed: this.lastSpeed,
+    };
   }
 
   get calibrationService(): CalibrationService {
@@ -334,8 +363,9 @@ export class Game {
     // 2. ドメインの遷移
     const elapsedMs = millis(nowMs - this.sessionStartedAt);
     const viewYaw = extractYaw(world);
+    this.lastYaw = viewYaw;
 
-    const stepped = step({
+    const stepInput = {
       ghosts: this.state.ghosts,
       beamAxis: _axis,
       light: this.state.light,
@@ -344,7 +374,9 @@ export class Game {
       elapsedMs,
       waveIndex: Math.max(0, this.state.spawnedCount - 1),
       config,
-    });
+    };
+    this.lastSpeed = approachSpeedOf(stepInput);
+    const stepped = step(stepInput);
 
     const reduced = reduce({
       state: this.state,

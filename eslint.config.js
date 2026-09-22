@@ -7,7 +7,16 @@ const BROWSER_API_MESSAGE = 'domain 層はブラウザ API を参照できませ
 
 export default tseslint.config(
   {
-    ignores: ['dist/', 'coverage/', 'node_modules/', 'public/'],
+    ignores: [
+      'dist/',
+      'coverage/',
+      'node_modules/',
+      'public/',
+      // 自動生成の base64 データ。人が読む前提のコードではない
+      'src/infrastructure/audio/sounds/data.ts',
+      // ビルド用スクリプト。tsconfig の対象外なので型付き lint を掛けられない
+      'scripts/',
+    ],
   },
 
   js.configs.recommended,

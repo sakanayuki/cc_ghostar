@@ -1,8 +1,10 @@
 import type { AudioPort, OneShotSound } from '@/application/ports';
+import type { SoundKey } from '@/domain/multiplayer/NetMessages';
 import type { GhostId, Vector3Like } from '@/shared/types';
 import { ONE_SHOT_SPECS, createVoice, playOneShot } from './ProceduralVoice';
 import type { Voice } from './ProceduralVoice';
 import { loadVoiceBuffer } from './VoiceSample';
+import { SoundBank } from './SoundBank';
 
 interface GhostNode {
   /** 手続き生成の常時鳴るノイズ。方向を継続的に掴むための床 */
@@ -30,6 +32,7 @@ export class WebAudioAdapter implements AudioPort {
   private failed = false;
   private voiceBuffer: AudioBuffer | null = null;
   private attachCounter = 0;
+  private soundBank: SoundBank | null = null;
 
   constructor(initiallyMuted = false) {
     this.muted = initiallyMuted;
@@ -170,6 +173,20 @@ export class WebAudioAdapter implements AudioPort {
     playOneShot(ctx, master, ONE_SHOT_SPECS[kind]);
   }
 
+  async loadInterferenceSounds(): Promise<void> {
+    await this.unlock();
+    const ctx = this.ctx;
+    if (ctx === null) return;
+    this.soundBank ??= new SoundBank(ctx);
+    await this.soundBank.load();
+  }
+
+  playInterference(key: SoundKey, position: Vector3Like): void {
+    const master = this.master;
+    if (master === null || this.soundBank === null) return;
+    this.soundBank.play(key, { x: position.x, y: EYE_HEIGHT, z: position.z }, master);
+  }
+
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (this.master !== null && this.ctx !== null) {
@@ -181,7 +198,8 @@ export class WebAudioAdapter implements AudioPort {
     if (this.failed) return 'failed';
     if (this.ctx === null) return 'locked';
     const source = this.voiceBuffer === null ? 'procedural' : 'sample+bed';
-    return `${this.ctx.state} ${this.ctx.sampleRate}Hz ${source}`;
+    const bank = this.soundBank === null ? '-' : this.soundBank.ready ? 'ready' : 'none';
+    return `${this.ctx.state} ${this.ctx.sampleRate}Hz ${source} sfx:${bank}`;
   }
 }
 
@@ -209,6 +227,12 @@ export class NullAudioAdapter implements AudioPort {
     /* 何もしない */
   }
   setMuted(): void {
+    /* 何もしない */
+  }
+  loadInterferenceSounds(): Promise<void> {
+    return Promise.resolve();
+  }
+  playInterference(): void {
     /* 何もしない */
   }
   describe(): string {

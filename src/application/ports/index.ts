@@ -1,4 +1,5 @@
 import type { DeviceAttitude } from '@/domain/math/Attitude';
+import type { SoundKey } from '@/domain/multiplayer/NetMessages';
 import type { GhostAnimation } from '@/domain/ghost/Ghost';
 import type { GhostId, Vector3Like } from '@/shared/types';
 
@@ -68,6 +69,15 @@ export interface AudioPort {
   playOneShot(kind: OneShotSound): void;
   setMuted(muted: boolean): void;
   describe(): string;
+
+  /**
+   * 妨害音を読み込む。ホストになったときだけ呼ぶ。
+   * 音源は 400KB 超あるため、妨害側の端末では読み込ませない（設計書 10.8）。
+   */
+  loadInterferenceSounds(): Promise<void>;
+
+  /** 妨害音を指定位置から 1 回鳴らす */
+  playInterference(key: SoundKey, position: Vector3Like): void;
 }
 
 // ── 描画 ──────────────────────────────────────────

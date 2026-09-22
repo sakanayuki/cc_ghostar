@@ -12,6 +12,13 @@ export interface RuntimeOptions {
   readonly ghosts: number | null;
   /** ?speed=N 接近速度を上書きする */
   readonly speed: number | null;
+  /**
+   * ?intruder=1 妨害側の画面を単体で表示する。
+   *
+   * 通信を張らずに合成データで動かす。2 台用意しなくても真上からの視点を
+   * 確認・調整できる（設計書 10.9）。
+   */
+  readonly intruderPreview: boolean;
 }
 
 const isOn = (value: string | null): boolean =>
@@ -32,5 +39,6 @@ export function parseRuntimeOptions(search: string): RuntimeOptions {
     mute: isOn(q.get('mute')),
     ghosts: toNumber(q.get('ghosts')),
     speed: toNumber(q.get('speed')),
+    intruderPreview: isOn(q.get('intruder')),
   };
 }

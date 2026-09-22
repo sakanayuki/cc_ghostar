@@ -341,3 +341,152 @@ body.mock-camera #camera {
     transition: none;
   }
 }
+
+/* ── マルチプレイ（設計書 10）────────────────────── */
+
+.panel__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  width: min(22rem, 100%);
+}
+
+.panel__stack[hidden] {
+  display: none;
+}
+
+.panel__note {
+  margin: 0;
+  max-width: 26rem;
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.btn--quiet {
+  border-color: rgba(221, 232, 240, 0.18);
+  color: var(--fg-dim);
+  font-size: 0.9rem;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+}
+
+/* 部屋コード。読み上げる前提なので大きく、字間を空ける */
+.roomcode {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: clamp(2rem, 12vw, 3rem);
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  padding: 0.5rem 0;
+}
+
+.roomcode-input {
+  width: min(16rem, 90%);
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(221, 232, 240, 0.35);
+  border-radius: 10px;
+  background: rgba(12, 18, 26, 0.85);
+  color: var(--fg);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.25em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.roomcode-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── 妨害側の画面 ────────────────────────────── */
+
+.intruder {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.5rem
+    max(0.75rem, env(safe-area-inset-bottom));
+  background: #f2f2f0;
+  color: #1c1f24;
+}
+
+.intruder[hidden] {
+  display: none;
+}
+
+/* 真上からの視点は白背景。ホスト側の暗い画面と役割を対比させる */
+.intruder__canvas {
+  display: block;
+  touch-action: none;
+}
+
+.intruder__status {
+  color: #1c1f24;
+  text-shadow: none;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.intruder__hint {
+  color: #5a616b;
+  text-shadow: none;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+}
+
+.intruder__bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.btn--sound {
+  position: relative;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 4.5rem;
+  max-width: 7rem;
+  padding: 0.7rem 0.5rem;
+  font-size: 0.9rem;
+  border-color: rgba(28, 31, 36, 0.3);
+  background: rgba(255, 255, 255, 0.85);
+  color: #1c1f24;
+}
+
+.btn--sound.btn--on {
+  border-color: #2b6f8f;
+  background: #d8ecf5;
+  color: #10384a;
+}
+
+/* クールダウンは残量を塗りで見せる。数字だけより直感的に分かる */
+.btn--sound.btn--cooling {
+  color: #8b929b;
+}
+
+.btn--sound.btn--cooling::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(28, 31, 36, 0.18);
+  transform-origin: left center;
+  transform: scaleX(calc(1 - var(--cool, 0%) / 100%));
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn--sound.btn--cooling::after {
+    transition: none;
+  }
+}
